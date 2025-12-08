@@ -50,6 +50,7 @@ Servico servicos[MAX_SERVICOS];
 
 /* --- 4. PROTÓTIPOS --- */
 void carregar_configuracoes();
+void* simulador_tempo(void* arg);
 void preparar_recursos();
 void limpar_recursos();
 void* thread_atende_clientes(void* arg);
@@ -57,7 +58,7 @@ void* interface_admin(void* arg);
 void processar_mensagem_cliente(Mensagem msg);
 void tratar_sinal_interrupcao(int sinal);
 
-/* =========================================================================
+/*/ =========================================================================
    FUNÇÃO: interface_admin (Thread separada para comandos do teclado)
    ========================================================================= */
 void *interface_admin(void *arg) {
@@ -137,29 +138,23 @@ void lancar_veiculo(int indice_servico) {
     }
 
     if (pid == 0) { 
-        // --- CÓDIGO DO FILHO (VEÍCULO) ---
-        
-        // A. Fechar a extremidade de leitura do pipe (o filho só escreve)
-        close(fd_pipe[0]);
+        // --- FILHO (VEÍCULO) ---
+        // ... (redirecionamento stdout igual) ...
 
-        // B. Redirecionar o STDOUT para o pipe (o que o veículo fizer printf, o pai lê)
-        dup2(fd_pipe[1], STDOUT_FILENO);
-        close(fd_pipe[1]); // Fecha o original pois já foi duplicado
-
-        // C. Preparar argumentos para o executável ./veiculo
         char str_id[10];
         char str_dist[10];
+        char str_pid_cliente[20]; // <--- NOVO
+
         sprintf(str_id, "%d", servicos[indice_servico].id);
         sprintf(str_dist, "%d", servicos[indice_servico].distancia);
+        sprintf(str_pid_cliente, "%d", servicos[indice_servico].pid_cliente); // <--- Passar PID Cliente
 
-        // D. Substituir a imagem do processo pelo executável do veículo
-        // Sintaxe: execl(caminho, nome_processo, arg1, arg2, NULL)
-        execl("./veiculo", "veiculo", str_id, servicos[indice_servico].origem, str_dist, NULL);
+        // Argumentos: ID, Origem, Distancia, PID_CLIENTE
+        execl("./veiculo", "veiculo", str_id, servicos[indice_servico].origem, str_dist, str_pid_cliente, NULL);
         
-        // Se o execl falhar (ex: não encontrar o ficheiro), o código continua aqui:
-        perror("[ERRO CRÍTICO] Falha no execl do veículo");
+        perror("[ERRO] Falha no execl");
         exit(1);
-    } 
+    }
     else {
         // --- CÓDIGO DO PAI (CONTROLADOR) ---
         int flags = fcntl(fd_pipe[0], F_GETFL, 0);
@@ -385,7 +380,25 @@ int main() {
     return 0;
 }
 
+
+
 /* --- Funções Auxiliares --- */
+void* simulador_tempo(void* arg) {
+    (void)arg; // Ignorar warning
+    
+    while (1) {
+        sleep(1); // Espera 1 segundo real
+        
+        // Bloqueia o acesso para escrever na variável com segurança
+        pthread_mutex_lock(&trinco);
+        segundos_decorridos++;
+        // (Opcional) Descomenta a linha abaixo se quiseres ver o tempo a passar no ecrã
+        // printf("[RELÓGIO] Tempo: %d s\n", segundos_decorridos);
+        pthread_mutex_unlock(&trinco);
+    }
+    return NULL;
+}
+
 void carregar_configuracoes() {
     char* env = getenv("NVEICULOS");
     n_veiculos_max = (env) ? atoi(env) : 3; // Valor por defeito se não houver VAR ambiente
@@ -414,18 +427,4 @@ void tratar_sinal_interrupcao(int sinal) {
     exit(0); 
 }
 
-void* simulador_tempo(void* arg) {
-    (void)arg; // Ignorar warning
-    
-    while (1) {
-        sleep(1); // Espera 1 segundo real
-        
-        // Bloqueia o acesso para escrever na variável com segurança
-        pthread_mutex_lock(&trinco);
-        segundos_decorridos++;
-        // (Opcional) Descomenta a linha abaixo se quiseres ver o tempo a passar no ecrã
-        // printf("[RELÓGIO] Tempo: %d s\n", segundos_decorridos);
-        pthread_mutex_unlock(&trinco);
-    }
-    return NULL;
-}
+

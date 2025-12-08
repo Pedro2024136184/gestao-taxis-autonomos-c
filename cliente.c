@@ -4,7 +4,7 @@
 // Variáveis globais para limpeza
 char fifo_nome_cliente[50];
 int fdp_cliente = -1; 
-int fdp_controlador = -1;
+int fdp_controlador = -1; 
 
 // Função para fechar pipes e apagar o FIFO do disco
 void limpar_recursos() {
