@@ -5,6 +5,9 @@
 char fifo_nome_cliente[50];
 int fdp_cliente = -1; 
 int fdp_controlador = -1; 
+int pid_veiculo_alocado = -1; // Para saber para onde mandar o 'entrar'
+pthread_mutex_t trinco_cli = PTHREAD_MUTEX_INITIALIZER;
+
 
 // Função para fechar pipes e apagar o FIFO do disco
 void limpar_recursos() {
@@ -23,6 +26,26 @@ void tratar_sinal(int sinal) {
     (void)sinal; // Ignorar warning de variavel nao usada
     limpar_recursos();
     exit(0);
+}
+
+void* recebe_respostas(void* arg) {
+    (void)arg;
+    Mensagem resp;
+    while(1) {
+        if (read(fdp_cliente, &resp, sizeof(Mensagem)) > 0) {
+            printf("\n[MSG RECEBIDA] %s\nCliente> ", resp.dados);
+            fflush(stdout);
+            
+            // Se for msg do veículo a dizer que chegou, guardamos o PID dele
+            if (resp.tipo == MSG_INFO_VEICULO && pid_veiculo_alocado == -1) {
+                // Assumindo que o veículo enviou o seu PID no campo pid_origem
+                pthread_mutex_lock(&trinco_cli);
+                pid_veiculo_alocado = resp.pid_origem;
+                pthread_mutex_unlock(&trinco_cli);
+            }
+        }
+    }
+    return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -79,7 +102,8 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-
+    pthread_t t_leitura;
+    pthread_create(&t_leitura, NULL, recebe_respostas, NULL);
     // 7. Loop Principal (Login aceite)
     printf(">> Aguardando comandos (Ctrl+C para sair)...\n");
     // --- Loop de Comandos ---
@@ -126,6 +150,31 @@ int main(int argc, char *argv[]) {
             } else {
                 printf("[ERRO] Formato invalido! Use: agendar <hora> <local> <distancia>\n");
             }
+        } else if (strcmp(comando, "entrar") == 0) {
+        if (pid_veiculo_alocado != -1) {
+            char fifo_veic[50];
+            sprintf(fifo_veic, FIFO_VEICULO_FMT, pid_veiculo_alocado);
+            int fd_v = open(fifo_veic, O_WRONLY);
+            
+            Mensagem m; 
+            m.tipo = MSG_PEDIDO_ENTRAR;
+            m.pid_origem = getpid();
+            write(fd_v, &m, sizeof(Mensagem));
+            close(fd_v);
+            printf("[INFO] Entraste no veículo.\n");
+            } else {
+              printf("[ERRO] Nenhum veículo chegou ainda.\n");
+            } 
+        } else if (strcmp(comando, "sair") == 0) {
+         if (pid_veiculo_alocado != -1) {
+            char fifo_veic[50];
+            sprintf(fifo_veic, FIFO_VEICULO_FMT, pid_veiculo_alocado);
+            int fd_v = open(fifo_veic, O_WRONLY);
+            Mensagem m; m.tipo = MSG_PEDIDO_SAIR;
+            write(fd_v, &m, sizeof(Mensagem));
+            close(fd_v);
+            pid_veiculo_alocado = -1; // Reset
+         }
         }
         else {
             printf("[ERRO] Comando desconhecido. Tente: agendar, terminar\n");

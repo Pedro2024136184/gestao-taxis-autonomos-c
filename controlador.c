@@ -42,6 +42,7 @@ typedef struct {
 int n_veiculos_max = 0;
 int segundos_decorridos = 0;
 int fdp_recebe;
+long long total_kms_percorridos = 0;
 pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
 
 // Bases de dados do sistema (Têm de estar aqui para o ADMIN ver)
@@ -112,6 +113,64 @@ void *interface_admin(void *arg) {
             printf("----------------------------\n");
             pthread_mutex_unlock(&trinco);
         }
+
+        else if (strncmp(comando, "cancelar", 8) == 0) {
+            int id_cancelar;
+            // Lê o ID a partir do comando (ignora a primeira palavra "cancelar")
+            if (sscanf(comando, "%*s %d", &id_cancelar) == 1) {
+                
+                pthread_mutex_lock(&trinco); // Protege o acesso à lista partilhada
+                
+                // CASO 1: Cancelar TODOS os serviços (ID = 0)
+                if (id_cancelar == 0) {
+                    printf("[ADMIN] A cancelar TODOS os serviços...\n");
+                    for (int i = 0; i < MAX_SERVICOS; i++) {
+                        if (servicos[i].id != -1) {
+                            // Se estiver em andamento, mata o processo do veículo
+                            if (servicos[i].estado == 1) { 
+                                kill(servicos[i].pid_veiculo, SIGUSR1);
+                                printf(" -> Sinal enviado ao veículo PID %d.\n", servicos[i].pid_veiculo);
+                            }
+                            // Limpa o slot
+                            servicos[i].id = -1;
+                            servicos[i].estado = 0;
+                        }
+                    }
+                    printf("[ADMIN] Todos os serviços foram cancelados.\n");
+                }
+                // CASO 2: Cancelar UM serviço específico
+                else {
+                    int encontrado = 0;
+                    for (int i = 0; i < MAX_SERVICOS; i++) {
+                        if (servicos[i].id == id_cancelar) {
+                            encontrado = 1;
+                            
+                            if (servicos[i].estado == 1) {
+                                 // Serviço em curso: Envia SINAL para parar o veículo
+                                 kill(servicos[i].pid_veiculo, SIGUSR1);
+                                 printf("[ADMIN] Serviço %d em curso -> Sinal SIGUSR1 enviado ao veículo (PID: %d).\n", id_cancelar, servicos[i].pid_veiculo);
+                            } else {
+                                 // Serviço pendente: Apenas remove da lista
+                                 printf("[ADMIN] Agendamento ID %d removido com sucesso.\n", id_cancelar);
+                            }
+                            
+                            // Liberta o slot
+                            servicos[i].id = -1;
+                            servicos[i].estado = 0;
+                            break;
+                        }
+                    }
+                    if (!encontrado) {
+                        printf("[ERRO] Serviço com ID %d não encontrado.\n", id_cancelar);
+                    }
+                }
+                
+                pthread_mutex_unlock(&trinco);
+            } else {
+                printf("[ERRO] Formato inválido. Use: cancelar <id> (Use 0 para cancelar tudo)\n");
+            }
+        }
+
         else {
             printf("[ERRO] Comando desconhecido.\n");
         }
@@ -136,25 +195,22 @@ void lancar_veiculo(int indice_servico) {
         perror("[ERRO] Falha no fork");
         return;
     }
-
-    if (pid == 0) { 
+    
+   if (pid == 0) { 
         // --- FILHO (VEÍCULO) ---
-        // ... (redirecionamento stdout igual) ...
+        close(fd_pipe[0]);
+        dup2(fd_pipe[1], STDOUT_FILENO); // Redireciona stdout para o pipe
+        close(fd_pipe[1]);
 
-        char str_id[10];
-        char str_dist[10];
-        char str_pid_cliente[20]; // <--- NOVO
-
+        char str_id[10], str_dist[10], str_pid_cli[20];
         sprintf(str_id, "%d", servicos[indice_servico].id);
         sprintf(str_dist, "%d", servicos[indice_servico].distancia);
-        sprintf(str_pid_cliente, "%d", servicos[indice_servico].pid_cliente); // <--- Passar PID Cliente
+        sprintf(str_pid_cli, "%d", servicos[indice_servico].pid_cliente); // <--- NOVO
 
-        // Argumentos: ID, Origem, Distancia, PID_CLIENTE
-        execl("./veiculo", "veiculo", str_id, servicos[indice_servico].origem, str_dist, str_pid_cliente, NULL);
-        
-        perror("[ERRO] Falha no execl");
+        // Passamos: ID, Origem, Distancia, PID_CLIENTE
+        execl("./veiculo", "veiculo", str_id, servicos[indice_servico].origem, str_dist, str_pid_cli, NULL);
         exit(1);
-    }
+    }   
     else {
         // --- CÓDIGO DO PAI (CONTROLADOR) ---
         int flags = fcntl(fd_pipe[0], F_GETFL, 0);
@@ -375,6 +431,7 @@ int main() {
     pthread_join(t_admin, NULL);
     pthread_join(t_clientes, NULL);
     pthread_join(t_monitor, NULL);
+    
 
     limpar_recursos();
     return 0;
