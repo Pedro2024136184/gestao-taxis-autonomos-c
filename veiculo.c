@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-
+//
 int main(int argc, char *argv[]) {
     // argv[1] = ID, argv[2] = Origem, argv[3] = Distancia
     if (argc < 4) return 1;
