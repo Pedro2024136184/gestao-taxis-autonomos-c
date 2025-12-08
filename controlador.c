@@ -40,6 +40,7 @@ typedef struct {
 
 /* --- 3. VARIÁVEIS GLOBAIS (Visíveis a todas as threads) --- */
 int n_veiculos_max = 0;
+int segundos_decorridos = 0;
 int fdp_recebe;
 pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
 
@@ -340,6 +341,7 @@ int main() {
     pthread_t t_clientes;
     pthread_t t_admin;
     pthread_t t_monitor; // <--- 1. Nova variável para a thread do monitor
+    pthread_t t_tempo;
 
     signal(SIGINT, tratar_sinal_interrupcao); 
     
@@ -361,13 +363,20 @@ int main() {
         exit(1);
     }
 
+
     // 4. Lança a thread que ouve o administrador (Teclado)
     if (pthread_create(&t_admin, NULL, interface_admin, NULL) != 0) {
         perror("[ERRO] Thread admin");
         exit(1);
     }
 
-    // 5. O main fica à espera. Adicionamos o join do monitor também (opcional, mas boa prática)
+    // 5. Lança a thread que simula o tempo a passar
+    if (pthread_create(&t_tempo, NULL, simulador_tempo, NULL) != 0) {
+        perror("[ERRO] Thread tempo");
+        exit(1);
+    }
+
+    // 6. O main fica à espera. Adicionamos o join do monitor também (opcional, mas boa prática)
     pthread_join(t_admin, NULL);
     pthread_join(t_clientes, NULL);
     pthread_join(t_monitor, NULL);
@@ -403,4 +412,20 @@ void tratar_sinal_interrupcao(int sinal) {
     printf("\n[SINAL] A desligar...\n");
     limpar_recursos(); 
     exit(0); 
+}
+
+void* simulador_tempo(void* arg) {
+    (void)arg; // Ignorar warning
+    
+    while (1) {
+        sleep(1); // Espera 1 segundo real
+        
+        // Bloqueia o acesso para escrever na variável com segurança
+        pthread_mutex_lock(&trinco);
+        segundos_decorridos++;
+        // (Opcional) Descomenta a linha abaixo se quiseres ver o tempo a passar no ecrã
+        // printf("[RELÓGIO] Tempo: %d s\n", segundos_decorridos);
+        pthread_mutex_unlock(&trinco);
+    }
+    return NULL;
 }
