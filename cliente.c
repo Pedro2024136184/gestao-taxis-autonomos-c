@@ -36,12 +36,22 @@ void* recebe_respostas(void* arg) {
             printf("\n[MSG RECEBIDA] %s\nCliente> ", resp.dados);
             fflush(stdout);
             
-            // Se for msg do veículo a dizer que chegou, guardamos o PID dele
-            if (resp.tipo == MSG_INFO_VEICULO && pid_veiculo_alocado == -1) {
-                // Assumindo que o veículo enviou o seu PID no campo pid_origem
-                pthread_mutex_lock(&trinco_cli);
-                pid_veiculo_alocado = resp.pid_origem;
-                pthread_mutex_unlock(&trinco_cli);
+            if (resp.tipo == MSG_INFO_VEICULO) {
+                // Lógica 1: Veículo Chegou (Guardar PID)
+                // Se já estivermos ocupados, ignoramos outros avisos (segurança)
+                if (pid_veiculo_alocado == -1 && (strstr(resp.dados, "Cheguei") != NULL || strstr(resp.dados, "chegou") != NULL)) {
+                     pthread_mutex_lock(&trinco_cli);
+                     pid_veiculo_alocado = resp.pid_origem;
+                     pthread_mutex_unlock(&trinco_cli);
+                }
+
+                // Lógica 2: Viagem Acabou (Libertar PID) - CORREÇÃO DO BUG
+                // Se recebermos "CONCLUIDA" ou "CANCELADA", o veículo morreu.
+                if (strstr(resp.dados, "CONCLUIDA") != NULL || strstr(resp.dados, "CANCELADA") != NULL) {
+                    pthread_mutex_lock(&trinco_cli);
+                    pid_veiculo_alocado = -1; // <--- RESET! Agora podes agendar outra.
+                    pthread_mutex_unlock(&trinco_cli);
+                }
             }
         }
     }

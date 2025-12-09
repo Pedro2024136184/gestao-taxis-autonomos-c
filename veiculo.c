@@ -31,99 +31,106 @@ void terminar_veiculo(int sinal) {
 }
 
 int main(int argc, char *argv[]) {
-    // argv[1]=ID, argv[2]=Origem, argv[3]=Dist, argv[4]=PID_CLIENTE
+    // ... (Verificações e Sinais mantêm-se iguais)
     if (argc < 5) return 1;
-
     signal(SIGINT, terminar_veiculo);
-    signal(SIGUSR1, terminar_veiculo); // Tratamento do cancelamento
+    signal(SIGUSR1, terminar_veiculo); 
 
     int id_viagem = atoi(argv[1]);
     int distancia = atoi(argv[3]);
     pid_cliente = atoi(argv[4]);
 
-    // 1. Criar FIFO do Veículo (para receber 'entrar'/'sair')
+    // 1. Criar FIFO do Veículo
     sprintf(fifo_meu, FIFO_VEICULO_FMT, getpid());
     if (mkfifo(fifo_meu, 0666) == -1) {
         perror("mkfifo veiculo");
         return 1;
     }
 
-    // 2. Avisar Controlador (Inicio) via STDOUT
+    // 2. Avisar Controlador
     printf("Veiculo %d (ID Viagem: %d) pronto.\n", getpid(), id_viagem);
     fflush(stdout);
 
-    // 3. Avisar Cliente "Cheguei" DIRETAMENTE
+    // 3. Avisar Cliente "Cheguei"
     char fifo_cli_nome[50];
     sprintf(fifo_cli_nome, FIFO_CLIENTE_FMT, pid_cliente);
     int fd_cli = open(fifo_cli_nome, O_WRONLY);
     if (fd_cli != -1) {
         Mensagem m;
         m.tipo = MSG_INFO_VEICULO;
-        m.pid_origem = getpid(); // Envia o PID para o cliente saber onde responder
+        m.pid_origem = getpid();
         strcpy(m.dados, "O veiculo chegou! Escreva: entrar <destino>");
         write(fd_cli, &m, sizeof(Mensagem));
         close(fd_cli);
     }
 
-    // 4. Aguardar comando "entrar"
-    fd_meu = open(fifo_meu, O_RDWR); // Bloqueia até abrir
+    // 4. Aguardar comando "entrar" (CORREÇÃO AQUI)
+    fd_meu = open(fifo_meu, O_RDWR); 
     Mensagem msg_in;
-    int a_bordo = 0;
+    int a_bordo = 0; // <--- Variável que estava a ser ignorada
 
+    // Loop de espera até receber ordem de entrar
     while (read(fd_meu, &msg_in, sizeof(Mensagem)) > 0) {
         if (msg_in.tipo == MSG_PEDIDO_ENTRAR) {
-            a_bordo = 1;
+            a_bordo = 1; // <--- Agora marcamos como verdadeiro
             printf("CLIENTE_EMBARCOU\n");
             fflush(stdout);
-            break; 
+            break; // Sai do loop de espera e inicia viagem
         }
     }
 
-    // 5. Simulação da Viagem
-    // Velocidade = 1km/s. Se distancia = 10km, demora 10s.
-    // Atualiza a cada 10%.
-    double passo_dist = distancia * 0.1;
-    double tempo_passo = passo_dist; // 1km = 1s
-    double percorrido = 0;
+    // 5. Simulação (Só arranca se estiver a bordo)
+    if (a_bordo == 1) {
+        double passo_dist = distancia * 0.1;
+        double tempo_passo = passo_dist; 
+        //double percorrido = 0;
 
-    // Configurar leitura não bloqueante para comando 'sair'
-    int flags = fcntl(fd_meu, F_GETFL, 0);
-    fcntl(fd_meu, F_SETFL, flags | O_NONBLOCK);
+        int flags = fcntl(fd_meu, F_GETFL, 0);
+        fcntl(fd_meu, F_SETFL, flags | O_NONBLOCK);
 
-    for (int i = 1; i <= 10; i++) {
-        // Dorme o tempo necessário para fazer 10% da viagem
-        usleep((useconds_t)(tempo_passo * 1000000)); 
-        
-        percorrido += passo_dist;
-        
-        // Reportar ao controlador
-        printf("ANDAMENTO %.1f kms (%d%%)\n", percorrido, i*10);
-        fflush(stdout);
+        for (int i = 1; i <= 10; i++) {
+            usleep((useconds_t)(tempo_passo * 1000000)); 
+            distancia_feita += passo_dist;
+            
+            // Reportar ao controlador
+            printf("ANDAMENTO %.1f kms\n", distancia_feita); 
+            fflush(stdout);
 
-        char fifo_cli_nome[50];
-        sprintf(fifo_cli_nome, FIFO_CLIENTE_FMT, pid_cliente);
-        int fd_cli = open(fifo_cli_nome, O_WRONLY | O_NONBLOCK);
+            // Reportar ao Cliente
+            char fifo_cli_nome[50];
+            sprintf(fifo_cli_nome, FIFO_CLIENTE_FMT, pid_cliente);
+            int fd_cli = open(fifo_cli_nome, O_WRONLY | O_NONBLOCK);
+            if (fd_cli != -1) {
+                Mensagem relatorio;
+                relatorio.tipo = MSG_INFO_VEICULO;
+                sprintf(relatorio.dados, "[VIAGEM] Progresso: %d%%", i*10); 
+                write(fd_cli, &relatorio, sizeof(Mensagem));
+                close(fd_cli);
+            }
 
-        if (fd_cli != -1) {
-            Mensagem relatorio;
-            relatorio.tipo = MSG_INFO_VEICULO;
-            // Esta é a mensagem que o cliente vai ver na sua thread de leitura:
-            sprintf(relatorio.dados, "[VIAGEM] Progresso: %d%%", i*10); 
-            write(fd_cli, &relatorio, sizeof(Mensagem));
-            close(fd_cli);
-        }
-
-        // Verificar se cliente mandou "sair"
-        if (read(fd_meu, &msg_in, sizeof(Mensagem)) > 0) {
-            if (msg_in.tipo == MSG_PEDIDO_SAIR) {
-                printf("CLIENTE_SAIU_ANTECIPADAMENTE\n");
-                fflush(stdout);
-                terminar_veiculo(0);
+            // Verificar "sair"
+            if (read(fd_meu, &msg_in, sizeof(Mensagem)) > 0) {
+                if (msg_in.tipo == MSG_PEDIDO_SAIR) {
+                    printf("CLIENTE_SAIU_ANTECIPADAMENTE\n");
+                    fflush(stdout);
+                    terminar_veiculo(0);
+                }
             }
         }
+        
+        // --- CORREÇÃO FINAL: Avisar Cliente que ACABOU ---
+        // Isto é fundamental para o cliente libertar a variável pid_veiculo_alocado
+        fd_cli = open(fifo_cli_nome, O_WRONLY | O_NONBLOCK);
+        if (fd_cli != -1) {
+            Mensagem m;
+            m.tipo = MSG_INFO_VEICULO;
+            strcpy(m.dados, "VIAGEM CONCLUIDA"); // Palavra-chave
+            write(fd_cli, &m, sizeof(Mensagem));
+            close(fd_cli);
+        }
     }
 
-    printf("VIAGEM_CONCLUIDA\n");
+    printf("VIAGEM_CONCLUIDA\n"); 
     fflush(stdout);
     terminar_veiculo(0);
     return 0;
