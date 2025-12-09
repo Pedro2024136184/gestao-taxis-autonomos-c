@@ -124,9 +124,18 @@ int main(int argc, char *argv[]) {
         sscanf(linha, "%s", comando);
 
         if (strcmp(comando, "terminar") == 0) {
-             // O utilizador quer sair
-             // Devíamos avisar o controlador, mas para já saímos só
-             break;
+          // REQUERIMENTO 1: Não pode sair se estiver em viagem (veículo alocado)
+            if (pid_veiculo_alocado != -1) {
+                printf("[ERRO] Nao pode terminar. Tem um serviço em curso ou à espera de iniciar.\n");
+                continue;
+            }
+
+            // REQUERIMENTO 2: Avisar controlador para cancelar agendamentos pendentes
+            msg.tipo = MSG_ENCERRAR; 
+            msg.pid_origem = getpid();
+            write(fdp_controlador, &msg, sizeof(Mensagem));
+            printf("[INFO] A informar controlador para cancelar agendamentos pendentes.\n");
+            break; // Sai do loop e chama limpar_recursos
         }
         else if (strcmp(comando, "agendar") == 0) {
             // Formato: agendar <hora> <local> <distancia>
@@ -175,6 +184,27 @@ int main(int argc, char *argv[]) {
             close(fd_v);
             pid_veiculo_alocado = -1; // Reset
          }
+        } else if (strcmp(comando, "cancelar") == 0) {
+            int id_cancelar;
+            // Cliente cancela APENAS agendamentos (Estado 0 ou pendente).
+            if (sscanf(linha, "%*s %d", &id_cancelar) == 1 && id_cancelar > 0) {
+                msg.tipo = MSG_CANCELAR_VIAGEM;
+                msg.pid_origem = getpid();
+                msg.id_viagem = id_cancelar;
+                write(fdp_controlador, &msg, sizeof(Mensagem));
+                printf("[INFO] Pedido de cancelamento ID %d enviado ao controlador.\n", id_cancelar);
+            } else {
+                printf("[ERRO] Formato inválido! Use: cancelar <id> (ID > 0)\n");
+            }
+        }
+        
+        // --- NOVO COMANDO: CONSULTAR ---
+        else if (strcmp(comando, "consultar") == 0) {
+            // O enunciado exige que o cliente consulte os seus próprios serviços no controlador.
+            msg.tipo = MSG_CONSULTAR_VIAGENS; 
+            msg.pid_origem = getpid();
+            write(fdp_controlador, &msg, sizeof(Mensagem));
+            printf("[INFO] Pedido de consulta de viagens enviado.\n");
         }
         else {
             printf("[ERRO] Comando desconhecido. Tente: agendar, terminar\n");
