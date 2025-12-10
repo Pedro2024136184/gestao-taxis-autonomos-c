@@ -219,6 +219,49 @@ int main(int argc, char *argv[]) {
         else {
             printf("[ERRO] Comando desconhecido. Tente: agendar, terminar\n");
         }
+
+        else if (msg.tipo == MSG_CONSULTAR_VIAGENS) {
+        pthread_mutex_lock(&trinco);
+        
+        char buffer_lista[TAM_BUFFER_MSG];
+        strcpy(buffer_lista, "As tuas viagens:\n");
+        int encontrou = 0;
+
+        for(int i=0; i<MAX_SERVICOS; i++) {
+            if (servicos[i].id != -1 && servicos[i].pid_cliente == msg.pid_origem) {
+                char linha[100];
+                char estado_str[20];
+                
+                if(servicos[i].estado == 0) strcpy(estado_str, "PENDENTE");
+                else if(servicos[i].estado == 1) strcpy(estado_str, "EM CURSO");
+                
+                sprintf(linha, "> ID: %d | Dest: %s | Status: %s\n", 
+                        servicos[i].id, servicos[i].origem, estado_str); // Nota: 'origem' no teu código é usado como local
+                
+                // Evitar buffer overflow
+                if (strlen(buffer_lista) + strlen(linha) < TAM_BUFFER_MSG - 1) {
+                    strcat(buffer_lista, linha);
+                }
+                encontrou = 1;
+            }
+        }
+
+        if (!encontrou) {
+            strcat(buffer_lista, "Nenhuma viagem agendada.");
+        }
+
+        pthread_mutex_unlock(&trinco);
+
+        // Enviar resposta ao cliente
+        resposta.tipo = MSG_INFO_VEICULO; // O cliente imprime isto
+        strcpy(resposta.dados, buffer_lista);
+        
+        fdp_envia = open(fifo_resp, O_WRONLY);
+        if (fdp_envia != -1) {
+            write(fdp_envia, &resposta, sizeof(Mensagem));
+            close(fdp_envia);
+        }
+    }
     }
 
     limpar_recursos();

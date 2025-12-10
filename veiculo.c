@@ -118,20 +118,23 @@ int main(int argc, char *argv[]) {
             }
         }
         
-        // --- CORREÇÃO FINAL: Avisar Cliente que ACABOU ---
-        // Isto é fundamental para o cliente libertar a variável pid_veiculo_alocado
         fd_cli = open(fifo_cli_nome, O_WRONLY | O_NONBLOCK);
         if (fd_cli != -1) {
             Mensagem m;
             m.tipo = MSG_INFO_VEICULO;
-            strcpy(m.dados, "VIAGEM CONCLUIDA"); // Palavra-chave
+            strcpy(m.dados, "VIAGEM CONCLUIDA"); 
             write(fd_cli, &m, sizeof(Mensagem));
             close(fd_cli);
         }
-    }
 
-    printf("VIAGEM_CONCLUIDA\n"); 
-    fflush(stdout);
-    terminar_veiculo(0);
+        // ADICIONAR ESTA LINHA:
+        pid_cliente = -1; // <--- O truque é este!
+
+        // Agora, quando chamares esta função, ela vê que pid_cliente é -1 
+        // e já não envia a mensagem de "CANCELADA".
+        printf("VIAGEM_CONCLUIDA\n"); 
+        fflush(stdout);
+        terminar_veiculo(0);
+    }
     return 0;
 }

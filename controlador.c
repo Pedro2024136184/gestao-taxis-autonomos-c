@@ -39,6 +39,7 @@ typedef struct {
 } Servico;
 
 /* --- 3. VARIÁVEIS GLOBAIS (Visíveis a todas as threads) --- */
+int veiculos_ativos = 0;
 int n_veiculos_max = 0;
 int segundos_decorridos = 0;
 int fdp_recebe;
@@ -302,7 +303,7 @@ void processar_mensagem_cliente(Mensagem msg) {
 
         printf("[PEDIDO] Novo agendamento de %s (PID: %d)\n", msg.username, msg.pid_origem);
 
-        // 1. Procurar slot livre
+        // 1. Procurar slot livre na lista de serviços
         int slot_servico = -1;
         for (int i = 0; i < MAX_SERVICOS; i++) {
             if (servicos[i].id == -1) {
@@ -311,19 +312,39 @@ void processar_mensagem_cliente(Mensagem msg) {
             }
         }
 
-        // 2. Guardar dados
         if (slot_servico != -1) {
-            servicos[slot_servico].id = slot_servico + 1; // ID começa em 1
+            // Guardar dados (Fica em Estado 0 = Pendente)
+            servicos[slot_servico].id = slot_servico + 1; 
             servicos[slot_servico].pid_cliente = msg.pid_origem;
             strcpy(servicos[slot_servico].origem, msg.local_origem);
             servicos[slot_servico].distancia = msg.distancia;
-            servicos[slot_servico].estado = 0; // 0 = Pendente
+            servicos[slot_servico].estado = 0; 
 
-            printf("[SUCESSO] Agendamento ID %d registado. Aguardando condutor...\n",
-                   servicos[slot_servico].id);
-            lancar_veiculo(slot_servico);
+            // VERIFICAÇÃO NVEICULOS [NOVO]
+            if (veiculos_ativos < n_veiculos_max) {
+                // Há vaga: Lança imediatamente
+                lancar_veiculo(slot_servico);
+                veiculos_ativos++; 
+                printf("[SUCESSO] Agendamento ID %d iniciado imediatamente.\n", servicos[slot_servico].id);
+            } else {
+                // Não há vaga: Fica apenas na lista (Fila de Espera)
+                printf("[FILA] Frota cheia (%d/%d). Agendamento ID %d ficou em espera.\n", 
+                        veiculos_ativos, n_veiculos_max, servicos[slot_servico].id);
+                
+                // Avisar o cliente que ficou em espera
+                strcpy(resposta.dados, "Agendamento em espera (Frota cheia). Aguarde condutor.");
+                resposta.tipo = MSG_INFO_VEICULO;
+                int fd = open(fifo_resp, O_WRONLY | O_NONBLOCK);
+                if(fd != -1) { write(fd, &resposta, sizeof(Mensagem)); close(fd); }
+            }
+
         } else {
             printf("[ERRO] Lista de serviços cheia!\n");
+             // Avisar cliente de erro
+            strcpy(resposta.dados, "Erro: Sistema de agendamentos cheio.");
+            resposta.tipo = MSG_INFO_VEICULO;
+            int fd = open(fifo_resp, O_WRONLY | O_NONBLOCK);
+            if(fd != -1) { write(fd, &resposta, sizeof(Mensagem)); close(fd); }
         }
 
         pthread_mutex_unlock(&trinco);
@@ -400,49 +421,78 @@ void* monitor_veiculos(void* arg) {
     printf("[MONITOR] Iniciado e a aguardar telemetria...\n");
 
     while (1) {
-        pthread_mutex_lock(&trinco);
+        pthread_mutex_lock(&trinco); // <--- LOCK GERAL
 
         for (int i = 0; i < MAX_SERVICOS; i++) {
             // Se o serviço está "Em Curso" (estado 1)
             if (servicos[i].id != -1 && servicos[i].estado == 1) {
 
-                // Tenta ler do pipe
+                // Tenta ler do pipe (Non-blocking)
                 int n = read(servicos[i].pipe_fd, buffer, sizeof(buffer) - 1);
 
                 if (n > 0) {
                     buffer[n] = '\0';
 
-                    // 1. Verificar se é a mensagem de FIM_SERVICO_KMS (Mensagem final do veículo ao sair)
+                    // --- DETETAR FIM DA VIAGEM ---
                     if (strstr(buffer, "FIM_SERVICO_KMS") != NULL) {
-                        float kms_finais;
-                        if (sscanf(buffer, "FIM_SERVICO_KMS: %f", &kms_finais) == 1) {
-                            pthread_mutex_lock(&trinco);
-                            // SOMA O VALOR EXATO QUE O VEÍCULO DISSE QUE PERCORREU
-                            total_kms_percorridos += (long long)kms_finais;
-                            printf("[CONTABILIDADE] Viagem %d terminada. +%.1f Kms adicionados ao total da frota.\n",
-                                   servicos[i].id, kms_finais);
-                            pthread_mutex_unlock(&trinco);
-                        }
+                        float kms_finais = 0;
+                        sscanf(buffer, "FIM_SERVICO_KMS: %f", &kms_finais);
+                        
+                        // 1. Contabilizar
+                        total_kms_percorridos += (long long)kms_finais;
+                        printf("[CONTABILIDADE] Viagem %d terminada. +%.1f Kms. (Total Frota: %lld)\n",
+                               servicos[i].id, kms_finais, total_kms_percorridos);
 
-                        // Limpeza do processo zombie e fecho do pipe
-                        waitpid(servicos[i].pid_veiculo, NULL, 0);
+                        // 2. Limpar Slot do Serviço Atual
                         close(servicos[i].pipe_fd);
                         servicos[i].id = -1;
                         servicos[i].estado = 0;
+                        
+                        // 3. Libertar vaga na frota
+                        veiculos_ativos--; 
+                        printf("[FROTA] Vaga libertada. Veículos ativos: %d/%d\n", veiculos_ativos, n_veiculos_max);
+
+                        // 4. VERIFICAR FILA DE ESPERA (FIFO)
+                        // Procura o primeiro serviço pendente (Estado 0) para ocupar a vaga
+                        for(int j=0; j<MAX_SERVICOS; j++) {
+                            if (servicos[j].id != -1 && servicos[j].estado == 0) {
+                                printf("[FILA] A iniciar serviço pendente ID %d...\n", servicos[j].id);
+                                lancar_veiculo(j);
+                                veiculos_ativos++;
+                                break; // Lança apenas 1 por cada vaga libertada
+                            }
+                        }
+
                     }
-                    // 2. Outras mensagens (APENAS log para o administrador)
+                    // --- TELEMETRIA NORMAL ---
                     else {
-                        printf("[TELEMETRIA] Veículo %d diz: %s", servicos[i].pid_veiculo, buffer);
+                         // Opcional: Se implementares o comando 'frota', atualizas a % aqui
+                         // if (strstr(buffer, "ANDAMENTO")) ...
+                         // printf("[TELEMETRIA] Veículo PID %d: %s", servicos[i].pid_veiculo, buffer);
                     }
                 }
-
+                // Se n == 0, o pipe fechou (veículo morreu/crashou sem dizer adeus)
+                else if (n == 0) {
+                     // Tratamento de robustez: Limpar serviço morto
+                     close(servicos[i].pipe_fd);
+                     servicos[i].id = -1;
+                     servicos[i].estado = 0;
+                     veiculos_ativos--;
+                     printf("[ERRO] Veículo do serviço %d desapareceu inesperadamente.\n", servicos[i].id);
+                }
             }
         }
 
-        pthread_mutex_unlock(&trinco);
-        usleep(100000); // Dorme 0.1s para não gastar 100% de CPU
+        pthread_mutex_unlock(&trinco); // <--- UNLOCK GERAL
+        usleep(100000); // 0.1s
     }
     return NULL;
+}
+
+void trata_zombies(int s) {
+    (void)s;
+    // O WNOHANG garante que o controlador não fica preso à espera
+    while (waitpid(-1, NULL, WNOHANG) > 0);
 }
 
 /* =========================================================================
@@ -455,7 +505,7 @@ int main() {
     pthread_t t_tempo;
 
     signal(SIGINT, tratar_sinal_interrupcao);
-
+    signal(SIGCHLD, trata_zombies);
     carregar_configuracoes();
     preparar_recursos();
 
