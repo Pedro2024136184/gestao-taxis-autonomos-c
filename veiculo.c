@@ -93,8 +93,8 @@ int main(int argc, char *argv[]) {
             distancia_feita += passo_dist;
             
             // Reportar ao controlador
-            printf("ANDAMENTO %.1f kms\n", distancia_feita); 
-            fflush(stdout);
+           printf("ANDAMENTO %.1f kms\n", distancia_feita); 
+           fflush(stdout);
 
             // Reportar ao Cliente
             char fifo_cli_nome[50];
