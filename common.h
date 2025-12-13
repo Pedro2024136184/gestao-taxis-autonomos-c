@@ -1,8 +1,7 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-/* --- Includes de Sistema --- */
-#include <stdio.h>      // Essencial para o printf
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -12,9 +11,8 @@
 #include <signal.h>
 #include <errno.h>
 #include <time.h>
-#include <pthread.h>    // Adicionado para threads
+#include <pthread.h>
 
-/* --- Constantes --- */
 #define MAX_UTILIZADORES    30
 #define MAX_VEICULOS        10
 #define TAM_MAX_USERNAME    20
@@ -25,7 +23,6 @@
 #define FIFO_CLIENTE_FMT    "fifo_cliente_%d"
 #define FIFO_VEICULO_FMT    "fifo_veiculo_%d"
 
-/* --- Estruturas --- */
 typedef enum {
     MSG_LOGIN,
     MSG_LOGIN_RESP,
@@ -50,4 +47,4 @@ typedef struct {
     char local_destino[TAM_MAX_LOCAL];
 } Mensagem;
 
-#endif // COMMON_H
+#endif

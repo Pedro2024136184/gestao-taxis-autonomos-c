@@ -1,7 +1,6 @@
 #include "common.h"
 #include "utils.h"
 
-// Variáveis globais para limpeza
 char fifo_nome_cliente[50];
 int fdp_cliente = -1; 
 int fdp_controlador = -1; 
@@ -26,22 +25,18 @@ void* recebe_respostas(void* arg) {
     Mensagem resp;
     while(1) {
         if (read(fdp_cliente, &resp, sizeof(Mensagem)) > 0) {
-            // Se for resposta de INFO, apenas imprime
             if (resp.tipo == MSG_INFO_VEICULO) {
-                 printf("\n[INFO SISTEMA]\n%s\nCliente> ", resp.dados);
-                 fflush(stdout);
+                printf("\n[INFO SISTEMA]\n%s\nCliente> ", resp.dados);
+                fflush(stdout);
 
-                 // CORREÇÃO AQUI: Verifica "chegou" (como está no veiculo.c) ou "Cheguei"
-                 if (pid_veiculo_alocado == -1 && 
+                if (pid_veiculo_alocado == -1 && 
                     (strstr(resp.dados, "Cheguei") != NULL || strstr(resp.dados, "chegou") != NULL)) {
-                     
-                     pthread_mutex_lock(&trinco_cli);
-                     pid_veiculo_alocado = resp.pid_origem; // Guarda o PID do táxi
-                     pthread_mutex_unlock(&trinco_cli);
-                 }
+                    pthread_mutex_lock(&trinco_cli);
+                    pid_veiculo_alocado = resp.pid_origem;
+                    pthread_mutex_unlock(&trinco_cli);
+                }
 
-                 // Verifica triggers de fim de viagem
-                 if (strstr(resp.dados, "CONCLUIDA") != NULL || strstr(resp.dados, "CANCELADA") != NULL) {
+                if (strstr(resp.dados, "CONCLUIDA") != NULL || strstr(resp.dados, "CANCELADA") != NULL) {
                     pthread_mutex_lock(&trinco_cli);
                     pid_veiculo_alocado = -1; 
                     pthread_mutex_unlock(&trinco_cli);
@@ -67,7 +62,6 @@ int main(int argc, char *argv[]) {
         printf("Controlador offline.\n"); unlink(fifo_nome_cliente); return 1; 
     }
 
-    // Login
     printf("[CLIENTE] Login: '%s'...\n", argv[1]);
     msg.tipo = MSG_LOGIN;
     msg.pid_origem = getpid();
@@ -99,7 +93,7 @@ int main(int argc, char *argv[]) {
 
         sscanf(linha, "%s", comando);
 
-        if (strcmp(comando, "terminar") == 0) { // [cite: 157]
+        if (strcmp(comando, "terminar") == 0) {
             if (pid_veiculo_alocado != -1) {
                 printf("[ERRO] Não pode sair durante viagem/embarque.\n"); continue;
             }
@@ -107,21 +101,20 @@ int main(int argc, char *argv[]) {
             msg.pid_origem = getpid();
             write(fdp_controlador, &msg, sizeof(Mensagem));
             break; 
-        }//
+        }
         else if (strcmp(comando, "agendar") == 0) { 
-    int hora, distancia;
-    char local[TAM_MAX_LOCAL];
-    // O scanf lê para a variável 'hora' local
-    if (sscanf(linha, "%*s %d %s %d", &hora, local, &distancia) == 3) {
-        msg.tipo = MSG_AGENDAR_VIAGEM;
-        msg.pid_origem = getpid();
-        msg.distancia = distancia;
-        msg.hora_agendada = hora; // <--- ADICIONA ESTA LINHA OBRIGATORIAMENTE
-        strcpy(msg.local_origem, local);
-        write(fdp_controlador, &msg, sizeof(Mensagem));
-   	 } else printf("Erro: agendar <hora> <local> <dist>\n");
-	}	
-        else if (strcmp(comando, "entrar") == 0) { // [cite: 147]
+            int hora, distancia;
+            char local[TAM_MAX_LOCAL];
+            if (sscanf(linha, "%*s %d %s %d", &hora, local, &distancia) == 3) {
+                msg.tipo = MSG_AGENDAR_VIAGEM;
+                msg.pid_origem = getpid();
+                msg.distancia = distancia;
+                msg.hora_agendada = hora;
+                strcpy(msg.local_origem, local);
+                write(fdp_controlador, &msg, sizeof(Mensagem));
+            } else printf("Erro: agendar <hora> <local> <dist>\n");
+        }	
+        else if (strcmp(comando, "entrar") == 0) {
             if (pid_veiculo_alocado != -1) {
                 char fifo_veic[50];
                 sprintf(fifo_veic, FIFO_VEICULO_FMT, pid_veiculo_alocado);
@@ -135,8 +128,8 @@ int main(int argc, char *argv[]) {
                 }
             } else printf("[ERRO] Nenhum veículo te chamou.\n");
         } 
-        else if (strcmp(comando, "sair") == 0) { // [cite: 152]
-             if (pid_veiculo_alocado != -1) {
+        else if (strcmp(comando, "sair") == 0) {
+            if (pid_veiculo_alocado != -1) {
                 char fifo_veic[50];
                 sprintf(fifo_veic, FIFO_VEICULO_FMT, pid_veiculo_alocado);
                 int fd_v = open(fifo_veic, O_WRONLY);
@@ -146,9 +139,9 @@ int main(int argc, char *argv[]) {
                     close(fd_v);
                 }
                 pid_veiculo_alocado = -1;
-             } else printf("[ERRO] Não estás num veículo.\n");
+            } else printf("[ERRO] Não estás num veículo.\n");
         } 
-        else if (strcmp(comando, "cancelar") == 0) { // [cite: 142]
+        else if (strcmp(comando, "cancelar") == 0) {
             int id_cancelar;
             if (sscanf(linha, "%*s %d", &id_cancelar) == 1) {
                 msg.tipo = MSG_CANCELAR_VIAGEM;
@@ -157,7 +150,7 @@ int main(int argc, char *argv[]) {
                 write(fdp_controlador, &msg, sizeof(Mensagem));
             } else printf("Erro: cancelar <id> (use 0 p/ todos)\n");
         }
-        else if (strcmp(comando, "consultar") == 0) { // [cite: 145]
+        else if (strcmp(comando, "consultar") == 0) {
             msg.tipo = MSG_CONSULTAR_VIAGENS; 
             msg.pid_origem = getpid();
             write(fdp_controlador, &msg, sizeof(Mensagem));
