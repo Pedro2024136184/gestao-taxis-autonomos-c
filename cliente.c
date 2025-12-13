@@ -107,18 +107,20 @@ int main(int argc, char *argv[]) {
             msg.pid_origem = getpid();
             write(fdp_controlador, &msg, sizeof(Mensagem));
             break; 
-        }
-        else if (strcmp(comando, "agendar") == 0) { // [cite: 139]
-            int hora, distancia;
-            char local[TAM_MAX_LOCAL];
-            if (sscanf(linha, "%*s %d %s %d", &hora, local, &distancia) == 3) {
-                msg.tipo = MSG_AGENDAR_VIAGEM;
-                msg.pid_origem = getpid();
-                msg.distancia = distancia;
-                strcpy(msg.local_origem, local);
-                write(fdp_controlador, &msg, sizeof(Mensagem));
-            } else printf("Erro: agendar <hora> <local> <dist>\n");
-        } 
+        }//
+        else if (strcmp(comando, "agendar") == 0) { 
+    int hora, distancia;
+    char local[TAM_MAX_LOCAL];
+    // O scanf lê para a variável 'hora' local
+    if (sscanf(linha, "%*s %d %s %d", &hora, local, &distancia) == 3) {
+        msg.tipo = MSG_AGENDAR_VIAGEM;
+        msg.pid_origem = getpid();
+        msg.distancia = distancia;
+        msg.hora_agendada = hora; // <--- ADICIONA ESTA LINHA OBRIGATORIAMENTE
+        strcpy(msg.local_origem, local);
+        write(fdp_controlador, &msg, sizeof(Mensagem));
+   	 } else printf("Erro: agendar <hora> <local> <dist>\n");
+	}	
         else if (strcmp(comando, "entrar") == 0) { // [cite: 147]
             if (pid_veiculo_alocado != -1) {
                 char fifo_veic[50];

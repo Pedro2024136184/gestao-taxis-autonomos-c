@@ -28,10 +28,11 @@ typedef struct {
     pid_t pid_cliente;
     char origem[50];
     int distancia;
+    int hora_agendada; // <--- ADICIONA ESTE CAMPO
     int estado; // 0=Pendente, 1=Atribuído, 2=Concluído
     pid_t pid_veiculo;
     int pipe_fd;       
-    float progresso_atual; // NOVO: Para o comando 'frota'
+    float progresso_atual;
 } Servico;
 
 /* --- 3. VARIÁVEIS GLOBAIS --- */
@@ -226,14 +227,7 @@ void* monitor_veiculos(void* arg) {
                         veiculos_ativos--; 
 
                         // Verifica fila de espera
-                        for(int j=0; j<MAX_SERVICOS; j++) {
-                            if (servicos[j].id != -1 && servicos[j].estado == 0) {
-                                printf("[FILA] A alocar veículo para serviço %d\n", servicos[j].id);
-                                lancar_veiculo(j);
-                                veiculos_ativos++;
-                                break; 
-                            }
-                        }
+
                     }
                     // 2. Veículo reporta andamento (Para o comando 'frota')
                     else if (strstr(buffer, "ANDAMENTO") != NULL) {
@@ -344,12 +338,12 @@ void processar_mensagem_cliente(Mensagem msg) {
             servicos[slot].pid_cliente = msg.pid_origem;
             strcpy(servicos[slot].origem, msg.local_origem);
             servicos[slot].distancia = msg.distancia;
+            servicos[slot].hora_agendada = msg.hora_agendada;
             servicos[slot].estado = 0; 
             servicos[slot].progresso_atual = 0;
 
             if (veiculos_ativos < n_veiculos_max) {
-                lancar_veiculo(slot);
-                veiculos_ativos++; 
+               
                 printf("[AGENDA] Serviço %d iniciado.\n", servicos[slot].id);
             } else {
                 printf("[FILA] Serviço %d em espera.\n", servicos[slot].id);
@@ -461,11 +455,33 @@ void* simulador_tempo(void* arg) {
         sleep(1);
         pthread_mutex_lock(&trinco);
         segundos_decorridos++;
+
+   
+        for (int i = 0; i < MAX_SERVICOS; i++) {
+            if (servicos[i].id != -1 && servicos[i].estado == 0) {
+                
+                // Regra 1: Já chegou a hora?
+                // Regra 2: Há carros disponíveis?
+                if (servicos[i].hora_agendada <= segundos_decorridos) {
+                    
+                    if (veiculos_ativos < n_veiculos_max) {
+                        printf("[RELOGIO] Hora %d: A iniciar serviço %d (Agendado: %d)\n", 
+                               segundos_decorridos, servicos[i].id, servicos[i].hora_agendada);
+                        
+                        lancar_veiculo(i);
+                        veiculos_ativos++;
+                    } 
+                    else {
+                        // Opcional: Log de debug para saberes que está em fila de espera
+                        // printf("[FILA] Serviço %d em espera por veículo (Hora: %d)\n", servicos[i].id, segundos_decorridos);
+                    }
+                }
+            }
+        }
         pthread_mutex_unlock(&trinco);
     }
     return NULL;
 }
-
 void carregar_configuracoes() {
     char* env = getenv("NVEICULOS");
     n_veiculos_max = (env) ? atoi(env) : 3; 
