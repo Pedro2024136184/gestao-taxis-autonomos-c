@@ -7,6 +7,7 @@ int fdp_controlador = -1;
 int pid_veiculo_alocado = -1; 
 pthread_mutex_t trinco_cli = PTHREAD_MUTEX_INITIALIZER;
 
+// Fecha FIFOs e remove arquivo do cliente
 void limpar_recursos() {
     if (fdp_cliente != -1) close(fdp_cliente);
     if (fdp_controlador != -1) close(fdp_controlador);
@@ -14,12 +15,14 @@ void limpar_recursos() {
     printf("\n[CLIENTE] Encerrado.\n");
 }
 
+// Trata sinais (SIGINT) e encerra
 void tratar_sinal(int sinal) {
     (void)sinal;
     limpar_recursos();
     exit(0);
 }
 
+// Thread: recebe respostas do controlador e atualiza estado do veículo
 void* recebe_respostas(void* arg) {
     (void)arg;
     Mensagem resp;
@@ -29,6 +32,7 @@ void* recebe_respostas(void* arg) {
                 printf("\n[INFO SISTEMA]\n%s\nCliente> ", resp.dados);
                 fflush(stdout);
 
+                // Veículo chegou
                 if (pid_veiculo_alocado == -1 && 
                     (strstr(resp.dados, "Cheguei") != NULL || strstr(resp.dados, "chegou") != NULL)) {
                     pthread_mutex_lock(&trinco_cli);
@@ -36,6 +40,7 @@ void* recebe_respostas(void* arg) {
                     pthread_mutex_unlock(&trinco_cli);
                 }
 
+                // Viagem concluída ou cancelada
                 if (strstr(resp.dados, "CONCLUIDA") != NULL || strstr(resp.dados, "CANCELADA") != NULL) {
                     pthread_mutex_lock(&trinco_cli);
                     pid_veiculo_alocado = -1; 
@@ -54,20 +59,24 @@ int main(int argc, char *argv[]) {
     if (argc != 2) { printf("Uso: %s <username>\n", argv[0]); return 1; }
     signal(SIGINT, tratar_sinal);
 
+    // Cria FIFO do cliente
     sprintf(fifo_nome_cliente, FIFO_CLIENTE_FMT, getpid());
     if (mkfifo(fifo_nome_cliente, 0666) == -1) { perror("FIFO"); return 1; }
 
+    // Conecta ao controlador
     fdp_controlador = open(FIFO_CONTROLADOR, O_WRONLY);
     if (fdp_controlador == -1) { 
         printf("Controlador offline.\n"); unlink(fifo_nome_cliente); return 1; 
     }
 
+    // Envia login
     printf("[CLIENTE] Login: '%s'...\n", argv[1]);
     msg.tipo = MSG_LOGIN;
     msg.pid_origem = getpid();
     strcpy(msg.username, argv[1]);
     write(fdp_controlador, &msg, sizeof(Mensagem));
 
+    // Recebe resposta de login
     fdp_cliente = open(fifo_nome_cliente, O_RDWR);
     if (read(fdp_cliente, &resposta, sizeof(Mensagem)) > 0) {
         if (resposta.tipo == MSG_LOGIN_RESP) {
@@ -78,6 +87,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Inicia thread de leitura de respostas
     pthread_t t_leitura;
     pthread_create(&t_leitura, NULL, recebe_respostas, NULL);
 
@@ -85,6 +95,7 @@ int main(int argc, char *argv[]) {
     char linha[TAM_BUFFER_MSG];
     char comando[20];
 
+    // Loop principal: processa comandos do utilizador
     while (1) {
         printf("Cliente> ");
         if (fgets(linha, sizeof(linha), stdin) == NULL) break;

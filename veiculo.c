@@ -6,8 +6,10 @@ int fd_meu = -1;
 int pid_cliente = 0;
 double distancia_feita = 0;
 
+// Função de tratamento de sinal para encerrar o veículo
 void terminar_veiculo(int sinal) {
     (void)sinal;
+    // Notifica o cliente sobre o cancelamento
     if (pid_cliente > 0) {
         char fifo_cli[50];
         sprintf(fifo_cli, FIFO_CLIENTE_FMT, pid_cliente);
@@ -20,6 +22,7 @@ void terminar_veiculo(int sinal) {
             close(fd);
         }
     }
+    // Imprime quilometragem final e limpa recursos
     printf("FIM_SERVICO_KMS: %.1f\n", distancia_feita);
     fflush(stdout);
 
@@ -30,6 +33,7 @@ void terminar_veiculo(int sinal) {
 
 int main(int argc, char *argv[]) {
     if (argc < 5) return 1;
+    // Registra handlers para sinais de encerramento
     signal(SIGINT, terminar_veiculo);
     signal(SIGUSR1, terminar_veiculo);
 
@@ -37,6 +41,7 @@ int main(int argc, char *argv[]) {
     int distancia = atoi(argv[3]);
     pid_cliente = atoi(argv[4]);
 
+    // Cria FIFO do veículo
     sprintf(fifo_meu, FIFO_VEICULO_FMT, getpid());
     if (mkfifo(fifo_meu, 0666) == -1) {
         perror("mkfifo veiculo");
@@ -46,6 +51,7 @@ int main(int argc, char *argv[]) {
     printf("Veiculo %d (ID Viagem: %d) pronto.\n", getpid(), id_viagem);
     fflush(stdout);
 
+    // Notifica cliente que veículo chegou
     char fifo_cli_nome[50];
     sprintf(fifo_cli_nome, FIFO_CLIENTE_FMT, pid_cliente);
     int fd_cli = open(fifo_cli_nome, O_WRONLY);
@@ -58,6 +64,7 @@ int main(int argc, char *argv[]) {
         close(fd_cli);
     }
 
+    // Aguarda cliente entrar no veículo
     fd_meu = open(fifo_meu, O_RDWR);
     Mensagem msg_in;
     int a_bordo = 0;
@@ -71,10 +78,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Simula a viagem em 10 passos
     if (a_bordo == 1) {
         double passo_dist = distancia * 0.1;
         double tempo_passo = passo_dist;
 
+        // Define FIFO como não-bloqueante para leitura
         int flags = fcntl(fd_meu, F_GETFL, 0);
         fcntl(fd_meu, F_SETFL, flags | O_NONBLOCK);
 
@@ -85,7 +94,7 @@ int main(int argc, char *argv[]) {
             printf("ANDAMENTO %.1f kms\n", distancia_feita);
             fflush(stdout);
 
-            char fifo_cli_nome[50];
+            // Envia progresso ao cliente
             sprintf(fifo_cli_nome, FIFO_CLIENTE_FMT, pid_cliente);
             int fd_cli = open(fifo_cli_nome, O_WRONLY | O_NONBLOCK);
             if (fd_cli != -1) {
@@ -96,6 +105,7 @@ int main(int argc, char *argv[]) {
                 close(fd_cli);
             }
 
+            // Verifica se cliente quer sair antes do fim
             if (read(fd_meu, &msg_in, sizeof(Mensagem)) > 0) {
                 if (msg_in.tipo == MSG_PEDIDO_SAIR) {
                     printf("CLIENTE_SAIU_ANTECIPADAMENTE\n");
@@ -105,6 +115,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        // Notifica conclusão da viagem
         fd_cli = open(fifo_cli_nome, O_WRONLY | O_NONBLOCK);
         if (fd_cli != -1) {
             Mensagem m;
@@ -113,8 +124,6 @@ int main(int argc, char *argv[]) {
             write(fd_cli, &m, sizeof(Mensagem));
             close(fd_cli);
         }
-
-        pid_cliente = -1;
 
         printf("VIAGEM_CONCLUIDA\n");
         fflush(stdout);

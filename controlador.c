@@ -14,34 +14,38 @@
 #define MAX_SERVICOS 20
 #define MAX_UTILIZADORES 30
 
+// Estrutura para armazenar informações de utilizadores conectados
 typedef struct {
     char username[TAM_MAX_USERNAME];
     pid_t pid;
     int ocupado; 
 } UtilizadorInfo;
 
+// Estrutura para armazenar informações de serviços (viagens)
 typedef struct {
     int id;
     pid_t pid_cliente;
     char origem[50];
     int distancia;
     int hora_agendada;
-    int estado;
+    int estado;              // 0=PENDENTE, 1=EM CURSO
     pid_t pid_veiculo;
-    int pipe_fd;       
+    int pipe_fd;             // Pipe para ler dados do veículo
     float progresso_atual;
 } Servico;
 
+// Variáveis globais
 int veiculos_ativos = 0;
 int n_veiculos_max = 0;
 int segundos_decorridos = 0;
 int fdp_recebe;
 long long total_kms_percorridos = 0;
-pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;  // Mutex para sincronização
 
 UtilizadorInfo utilizadores[MAX_UTILIZADORES];
 Servico servicos[MAX_SERVICOS];
 
+// Declarações de funções
 void carregar_configuracoes();
 void* simulador_tempo(void* arg);
 void preparar_recursos();
@@ -53,6 +57,7 @@ void processar_mensagem_cliente(Mensagem msg);
 void tratar_sinal_interrupcao(int sinal);
 void lancar_veiculo(int indice_servico);
 
+// Thread: Interface administrativa para comandos do sistema
 void *interface_admin(void *arg) {
     (void)arg;
     char comando[100];
@@ -71,6 +76,7 @@ void *interface_admin(void *arg) {
             break;
         }
         else if (strcmp(comando, "listar") == 0) {
+            // Lista todos os serviços agendados
             pthread_mutex_lock(&trinco);
             printf("\n--- LISTA DE SERVIÇOS ---\n");
             int vazia = 1;
@@ -91,6 +97,7 @@ void *interface_admin(void *arg) {
             pthread_mutex_unlock(&trinco);
         }
         else if (strcmp(comando, "utiliz") == 0) {
+            // Lista utilizadores online
             pthread_mutex_lock(&trinco);
             printf("\n--- UTILIZADORES ON-LINE ---\n");
             int vazia = 1;
@@ -105,6 +112,7 @@ void *interface_admin(void *arg) {
             pthread_mutex_unlock(&trinco);
         }
         else if (strcmp(comando, "frota") == 0) {
+            // Mostra estado dos veículos em circulação
             pthread_mutex_lock(&trinco);
             printf("\n--- ESTADO DA FROTA ---\n");
             int ativos = 0;
@@ -125,16 +133,19 @@ void *interface_admin(void *arg) {
             pthread_mutex_unlock(&trinco);
         }
         else if (strcmp(comando, "km") == 0) {
+            // Mostra estatística de kms
             pthread_mutex_lock(&trinco);
             printf("[ESTATISTICA] Total Kms percorridos pela frota: %lld km\n", total_kms_percorridos);
             pthread_mutex_unlock(&trinco);
         }
         else if (strcmp(comando, "hora") == 0) {
+            // Mostra tempo simulado
             pthread_mutex_lock(&trinco);
             printf("[RELOGIO] Tempo simulado: %d segundos\n", segundos_decorridos);
             pthread_mutex_unlock(&trinco);
         }
         else if (strncmp(comando, "cancelar", 8) == 0) {
+            // Cancela serviço específico ou todos
             int id_cancelar;
             if (sscanf(comando, "%*s %d", &id_cancelar) == 1) {
                 pthread_mutex_lock(&trinco);
@@ -180,6 +191,7 @@ void *interface_admin(void *arg) {
     return NULL;
 }
 
+// Thread: Monitora veículos e lê dados dos pipes
 void* monitor_veiculos(void* arg) {
     (void)arg;
     char buffer[256];
@@ -188,13 +200,16 @@ void* monitor_veiculos(void* arg) {
     while (1) {
         pthread_mutex_lock(&trinco); 
 
+        // Verifica cada serviço em curso
         for (int i = 0; i < MAX_SERVICOS; i++) {
             if (servicos[i].id != -1 && servicos[i].estado == 1) {
+                // Lê dados do pipe do veículo
                 int n = read(servicos[i].pipe_fd, buffer, sizeof(buffer) - 1);
                 if (n > 0) {
                     buffer[n] = '\0';
                     
                     if (strstr(buffer, "FIM_SERVICO_KMS") != NULL) {
+                        // Serviço concluído
                         float kms_finais = 0;
                         sscanf(buffer, "FIM_SERVICO_KMS: %f", &kms_finais);
                         total_kms_percorridos += (long long)kms_finais;
@@ -206,6 +221,7 @@ void* monitor_veiculos(void* arg) {
                         veiculos_ativos--;
                     }
                     else if (strstr(buffer, "ANDAMENTO") != NULL) {
+                        // Atualiza progresso do serviço
                         float kms_atuais = 0;
                         if(sscanf(buffer, "ANDAMENTO %f", &kms_atuais) == 1) {
                             servicos[i].progresso_atual = kms_atuais;
@@ -213,6 +229,7 @@ void* monitor_veiculos(void* arg) {
                     }
                 }
                 else if (n == 0) {
+                    // Pipe fechado - serviço terminou
                     close(servicos[i].pipe_fd);
                     servicos[i].id = -1;
                     servicos[i].estado = 0;
@@ -226,12 +243,14 @@ void* monitor_veiculos(void* arg) {
     return NULL;
 }
 
+// Processa mensagens recebidas dos clientes
 void processar_mensagem_cliente(Mensagem msg) {
     Mensagem resposta;
     char fifo_resp[50];
     sprintf(fifo_resp, FIFO_CLIENTE_FMT, msg.pid_origem);
 
     if (msg.tipo == MSG_LOGIN) {
+        // Processa login do cliente
         pthread_mutex_lock(&trinco);
         int aceito = 1;
         for (int i = 0; i < MAX_UTILIZADORES; i++) {
@@ -264,6 +283,7 @@ void processar_mensagem_cliente(Mensagem msg) {
     }
     
     else if (msg.tipo == MSG_CONSULTAR_VIAGENS) {
+        // Retorna lista de viagens do cliente
         pthread_mutex_lock(&trinco);
         char buffer_lista[TAM_BUFFER_MSG];
         strcpy(buffer_lista, "As tuas viagens:\n");
@@ -296,6 +316,7 @@ void processar_mensagem_cliente(Mensagem msg) {
     }
 
     else if (msg.tipo == MSG_AGENDAR_VIAGEM) {
+        // Agenda nova viagem
         pthread_mutex_lock(&trinco);
         int slot = -1;
         for (int i = 0; i < MAX_SERVICOS; i++) {
@@ -308,7 +329,7 @@ void processar_mensagem_cliente(Mensagem msg) {
             strcpy(servicos[slot].origem, msg.local_origem);
             servicos[slot].distancia = msg.distancia;
             servicos[slot].hora_agendada = msg.hora_agendada;
-            servicos[slot].estado = 0; 
+            servicos[slot].estado = 0;  // PENDENTE
             servicos[slot].progresso_atual = 0;
 
             if (veiculos_ativos < n_veiculos_max) {
@@ -330,6 +351,7 @@ void processar_mensagem_cliente(Mensagem msg) {
     }
 
     else if (msg.tipo == MSG_CANCELAR_VIAGEM) {
+        // Cancela viagem do cliente
         pthread_mutex_lock(&trinco);
         if (msg.id_viagem == 0) {
             for (int i = 0; i < MAX_SERVICOS; i++) {
@@ -355,6 +377,7 @@ void processar_mensagem_cliente(Mensagem msg) {
     }
 
     else if (msg.tipo == MSG_ENCERRAR) {
+        // Cliente desconecta
         pthread_mutex_lock(&trinco);
         for (int i = 0; i < MAX_SERVICOS; i++) {
             if (servicos[i].pid_cliente == msg.pid_origem && servicos[i].estado == 0) {
@@ -372,12 +395,14 @@ void processar_mensagem_cliente(Mensagem msg) {
     }
 }
 
+// Cria processo filho para executar veículo
 void lancar_veiculo(int indice_servico) {
     int fd_pipe[2]; 
     if (pipe(fd_pipe) == -1) return;
 
     pid_t pid = fork();
     if (pid == 0) {
+        // Processo filho: executa programa veiculo
         close(fd_pipe[0]);
         dup2(fd_pipe[1], STDOUT_FILENO);
         close(fd_pipe[1]);
@@ -390,15 +415,17 @@ void lancar_veiculo(int indice_servico) {
         execl("./veiculo", "veiculo", str_id, servicos[indice_servico].origem, str_dist, str_pid_cli, NULL);
         exit(1);
     } else {
+        // Processo pai: configura pipe como não-bloqueante
         int flags = fcntl(fd_pipe[0], F_GETFL, 0);
         fcntl(fd_pipe[0], F_SETFL, flags | O_NONBLOCK);
         close(fd_pipe[1]);
         servicos[indice_servico].pid_veiculo = pid;
         servicos[indice_servico].pipe_fd = fd_pipe[0]; 
-        servicos[indice_servico].estado = 1; 
+        servicos[indice_servico].estado = 1;  // EM CURSO
     }
 }
 
+// Thread: Recebe mensagens dos clientes via FIFO
 void* thread_atende_clientes(void* arg) {
     (void)arg;
     Mensagem msg;
@@ -411,6 +438,7 @@ void* thread_atende_clientes(void* arg) {
     return NULL;
 }
 
+// Thread: Simula passagem de tempo e inicia serviços agendados
 void* simulador_tempo(void* arg) {
     (void)arg;
     while (1) {
@@ -418,6 +446,7 @@ void* simulador_tempo(void* arg) {
         pthread_mutex_lock(&trinco);
         segundos_decorridos++;
 
+        // Verifica se algum serviço deve ser iniciado
         for (int i = 0; i < MAX_SERVICOS; i++) {
             if (servicos[i].id != -1 && servicos[i].estado == 0) {
                 if (servicos[i].hora_agendada <= segundos_decorridos) {
@@ -436,6 +465,7 @@ void* simulador_tempo(void* arg) {
     return NULL;
 }
 
+// Carrega configurações do sistema (número máximo de veículos)
 void carregar_configuracoes() {
     char* env = getenv("NVEICULOS");
     n_veiculos_max = (env) ? atoi(env) : 3; 
@@ -445,11 +475,13 @@ void carregar_configuracoes() {
     for(int i=0; i<MAX_SERVICOS; i++) servicos[i].id = -1;
 }
 
+// Prepara recursos (cria FIFO do controlador)
 void preparar_recursos() {
     if (access(FIFO_CONTROLADOR, F_OK) == 0) unlink(FIFO_CONTROLADOR);
     if (mkfifo(FIFO_CONTROLADOR, 0666) == -1) exit(1);
 }
 
+// Liberta recursos (fecha FIFO, mata veículos)
 void limpar_recursos() {
     close(fdp_recebe);
     unlink(FIFO_CONTROLADOR);
@@ -458,12 +490,14 @@ void limpar_recursos() {
     }
 }
 
+// Handler para sinal de interrupção (CTRL+C)
 void tratar_sinal_interrupcao(int sinal) {
     (void)sinal;
     limpar_recursos();
     exit(0);
 }
 
+// Handler para processos filhos mortos (evita zombies)
 void trata_zombies(int s) { 
     (void)s; 
     while (waitpid(-1, NULL, WNOHANG) > 0); 
@@ -479,6 +513,7 @@ int main() {
 
     printf("\n[CONTROLADOR] Iniciado. Max Veiculos: %d\n", n_veiculos_max);
 
+    // Cria threads principais
     pthread_create(&t_clientes, NULL, thread_atende_clientes, NULL);
     pthread_create(&t_monitor, NULL, monitor_veiculos, NULL);
     pthread_create(&t_admin, NULL, interface_admin, NULL);
