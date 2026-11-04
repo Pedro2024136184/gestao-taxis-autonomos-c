@@ -481,13 +481,35 @@ void preparar_recursos() {
     if (mkfifo(FIFO_CONTROLADOR, 0666) == -1) exit(1);
 }
 
-// Liberta recursos (fecha FIFO, mata veículos)
+// Liberta recursos (notifica clientes, termina veículos e fecha FIFO)
 void limpar_recursos() {
+    pthread_mutex_lock(&trinco);
+    for (int i = 0; i < MAX_UTILIZADORES; i++) {
+        if (utilizadores[i].ocupado && utilizadores[i].pid > 0) {
+            char fifo_cli[50];
+            snprintf(fifo_cli, sizeof(fifo_cli), FIFO_CLIENTE_FMT, (int)utilizadores[i].pid);
+            int fd = open(fifo_cli, O_WRONLY | O_NONBLOCK);
+            if (fd != -1) {
+                Mensagem m;
+                memset(&m, 0, sizeof(m));
+                m.tipo = MSG_ENCERRAR;
+                strncpy(m.dados, "O servidor foi desligado pelo administrador.", sizeof(m.dados) - 1);
+                write(fd, &m, sizeof(Mensagem));
+                close(fd);
+            }
+        }
+    }
+    for (int i = 0; i < MAX_SERVICOS; i++) {
+        if (servicos[i].id != -1 && servicos[i].estado == 1 && servicos[i].pid_veiculo > 0) {
+            kill(servicos[i].pid_veiculo, SIGTERM);
+        }
+    }
+    pthread_mutex_unlock(&trinco);
+
+    usleep(150000); // Aguarda término dos processos filhos
     close(fdp_recebe);
     unlink(FIFO_CONTROLADOR);
-    for(int i=0; i<MAX_SERVICOS; i++){
-        if(servicos[i].id != -1 && servicos[i].estado == 1) kill(servicos[i].pid_veiculo, SIGKILL);
-    }
+    printf("\n[CONTROLADOR] Todos os recursos foram libertados com sucesso.\n");
 }
 
 // Handler para sinal de interrupção (CTRL+C)
@@ -497,7 +519,7 @@ void tratar_sinal_interrupcao(int sinal) {
     exit(0);
 }
 
-// Handler para processos filhos mortos (evita zombies)
+// Handler para processos filhos mortos (evita zombies de veículos)
 void trata_zombies(int s) { 
     (void)s; 
     while (waitpid(-1, NULL, WNOHANG) > 0); 
@@ -505,21 +527,38 @@ void trata_zombies(int s) {
 
 int main() {
     pthread_t t_clientes, t_admin, t_monitor, t_tempo;
-    signal(SIGINT, tratar_sinal_interrupcao);
-    signal(SIGCHLD, trata_zombies);
+
+    struct sigaction sa_int, sa_chld;
+    memset(&sa_int, 0, sizeof(sa_int));
+    sa_int.sa_handler = tratar_sinal_interrupcao;
+    sigemptyset(&sa_int.sa_mask);
+    sa_int.sa_flags = SA_RESTART;
+    sigaction(SIGINT, &sa_int, NULL);
+    sigaction(SIGTERM, &sa_int, NULL);
+
+    memset(&sa_chld, 0, sizeof(sa_chld));
+    sa_chld.sa_handler = trata_zombies;
+    sigemptyset(&sa_chld.sa_mask);
+    sa_chld.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    sigaction(SIGCHLD, &sa_chld, NULL);
 
     carregar_configuracoes();
     preparar_recursos();
 
-    printf("\n[CONTROLADOR] Iniciado. Max Veiculos: %d\n", n_veiculos_max);
+    printf("\n[CONTROLADOR] Iniciado com sucesso. Frota Maxima: %d veiculos.\n", n_veiculos_max);
 
-    // Cria threads principais
+    // Criação das threads concorrentes de serviço
     pthread_create(&t_clientes, NULL, thread_atende_clientes, NULL);
     pthread_create(&t_monitor, NULL, monitor_veiculos, NULL);
     pthread_create(&t_admin, NULL, interface_admin, NULL);
     pthread_create(&t_tempo, NULL, simulador_tempo, NULL);
 
     pthread_join(t_admin, NULL);
+
+    pthread_cancel(t_clientes);
+    pthread_cancel(t_monitor);
+    pthread_cancel(t_tempo);
+
     limpar_recursos();
     return 0;
 }
