@@ -1,0 +1,13 @@
+# Compilação e Binários
+*.o
+controlador
+cliente
+veiculo
+
+# Named Pipes / FIFOs gerados durante a execução
+fifo_*
+
+# Ficheiros temporários e do sistema
+*~
+.DS_Store
+Thumbs.db
